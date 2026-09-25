@@ -1,12 +1,25 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useCastStore } from '@/store/useCastStore';
 import { Terminal, ChevronDown, ChevronUp } from 'lucide-react';
 
 export function DebugPanel() {
   const [isOpen, setIsOpen] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
   const { role, roomId, connectionState, iceState, signalingState, logs } = useCastStore();
+
+  useEffect(() => {
+    // Solo mostrar si se activa explícitamente por variable de entorno o flag en URL (?debug=true)
+    const envDebug = process.env.NEXT_PUBLIC_DEBUG === 'true';
+    const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+    const queryDebug = urlParams?.get('debug') === 'true' || urlParams?.get('debug') === '1';
+    const localDebug = typeof window !== 'undefined' && window.localStorage.getItem('debug') === 'true';
+
+    setShowDebug(Boolean(envDebug || queryDebug || localDebug));
+  }, []);
+
+  if (!showDebug) return null;
 
   return (
     <div className="fixed bottom-4 right-4 z-50 max-w-md w-full pointer-events-auto">
