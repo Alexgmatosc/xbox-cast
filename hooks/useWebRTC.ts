@@ -432,8 +432,8 @@ export function useWebRTC() {
               return;
             }
 
-            if (!offerPayload || !offerPayload.sdp) {
-              throw new Error('La oferta SDP recibida está vacía');
+            if (!offerPayload || typeof offerPayload !== 'object' || !offerPayload.sdp) {
+              throw new Error('La oferta SDP recibida no es válida o no pudo ser procesada');
             }
 
             // Si la conexión anterior cerró o falló, recrear una limpia

@@ -3,8 +3,19 @@
  * Deriva una clave AES-GCM (256-bit) a partir del PIN de emparejamiento.
  */
 
+export function isCryptoSubtleAvailable(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.crypto !== 'undefined' &&
+    typeof window.crypto.subtle !== 'undefined'
+  );
+}
+
 // Salt determinista basado en el identificador de la sala
 async function getRoomSalt(roomId: string): Promise<BufferSource> {
+  if (!isCryptoSubtleAvailable()) {
+    throw new Error('Web Crypto API no disponible (se requiere contexto seguro HTTPS)');
+  }
   const enc = new TextEncoder();
   const hash = await crypto.subtle.digest('SHA-256', enc.encode(`xbox-cast-salt-${roomId}`));
   return hash.slice(0, 16);
@@ -12,6 +23,9 @@ async function getRoomSalt(roomId: string): Promise<BufferSource> {
 
 // Derivar clave AES-GCM (256 bits) usando PBKDF2 a partir del PIN
 export async function deriveKeyFromPin(pin: string, roomId: string): Promise<CryptoKey> {
+  if (!isCryptoSubtleAvailable()) {
+    throw new Error('Web Crypto API no disponible (se requiere contexto seguro HTTPS)');
+  }
   const enc = new TextEncoder();
   const pinData = enc.encode(pin.trim());
   const salt = await getRoomSalt(roomId);

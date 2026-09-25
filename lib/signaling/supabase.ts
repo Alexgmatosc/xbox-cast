@@ -54,12 +54,21 @@ export class SupabaseSignaling implements SignalingClient {
                   decryptedPayload = await decryptPayload(this.cryptoKey, payload.payload);
                 } catch (err) {
                   console.error('[Supabase E2EE] Error al descifrar mensaje (PIN incorrecto o clave alterada):', err);
-                  const errorHandlers = this.listeners.get('error');
+                  const errorHandlers = this.listeners.get('client-error') || this.listeners.get('error');
                   if (errorHandlers) {
-                    errorHandlers.forEach((h) => h({ message: 'Clave E2EE incorrecta o carga alterada' }));
+                    errorHandlers.forEach((h) => h({ message: 'Clave E2EE incorrecta o PIN erróneo' }));
                   }
                   return;
                 }
+              } else if (payload.encrypted && !this.cryptoKey) {
+                console.error('[Supabase E2EE] Mensaje cifrado recibido pero no hay clave E2EE en este navegador');
+                const errorHandlers = this.listeners.get('client-error') || this.listeners.get('error');
+                if (errorHandlers) {
+                  errorHandlers.forEach((h) =>
+                    h({ message: 'Se requiere conexión segura HTTPS para descifrar E2EE' })
+                  );
+                }
+                return;
               }
 
               const handlers = this.listeners.get(payload.type);
