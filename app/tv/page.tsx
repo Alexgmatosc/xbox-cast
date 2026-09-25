@@ -3,7 +3,7 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Tv, Play, AlertCircle, Wifi } from 'lucide-react';
+import { ArrowLeft, Tv, Play, AlertCircle, Wifi, Clock, ShieldCheck } from 'lucide-react';
 import { useCastStore } from '@/store/useCastStore';
 import { useWebRTC } from '@/hooks/useWebRTC';
 import { TVSafeLayout } from '@/components/TVSafeLayout';
@@ -26,6 +26,36 @@ function TVContent() {
 
   const { startReceiver, stopStreaming } = useWebRTC();
   const [pin, setPin] = useState(initialRoom);
+  const [attempts, setAttempts] = useState(0);
+  const [lockoutSeconds, setLockoutSeconds] = useState(0);
+
+  // Contador regresivo para bloqueo tras 3 intentos fallidos (seguridad anti fuerza bruta)
+  useEffect(() => {
+    if (lockoutSeconds <= 0) return;
+    const timer = setInterval(() => {
+      setLockoutSeconds((prev) => {
+        if (prev <= 1) {
+          setAttempts(0);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [lockoutSeconds]);
+
+  // Si ocurre un error, contabilizar intento fallido
+  useEffect(() => {
+    if (errorMessage) {
+      setAttempts((prev) => {
+        const next = prev + 1;
+        if (next >= 3) {
+          setLockoutSeconds(30);
+        }
+        return next;
+      });
+    }
+  }, [errorMessage]);
 
   useEffect(() => {
     setRole('receiver');
@@ -36,8 +66,9 @@ function TVContent() {
   }, [initialRoom, setRole, setRoomId]);
 
   const handleConnect = async (targetPin?: string) => {
+    if (lockoutSeconds > 0) return;
     const code = (targetPin || pin).trim();
-    if (!code) return;
+    if (!code || code.length < 6) return;
 
     setRoomId(code);
 
@@ -70,14 +101,31 @@ function TVContent() {
           <span className="text-sm font-semibold">Volver al inicio</span>
         </Link>
 
-        <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-zinc-900 border border-zinc-800 text-xs font-medium text-zinc-300">
-          <Tv className="w-4 h-4 text-xbox-green" />
-          <span>Modo TV (Xbox Edge)</span>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-950/60 border border-emerald-800/80 text-xs font-medium text-emerald-400">
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>E2EE 256-bit</span>
+          </div>
+          <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-zinc-900 border border-zinc-800 text-xs font-medium text-zinc-300">
+            <Tv className="w-4 h-4 text-xbox-green" />
+            <span>Modo TV (Xbox Edge)</span>
+          </div>
         </div>
       </header>
 
+      {/* Alerta de bloqueo por intentos fallidos */}
+      {lockoutSeconds > 0 && (
+        <div className="my-4 max-w-xl mx-auto p-4 rounded-2xl bg-amber-950/80 border border-amber-700/80 text-amber-200 flex items-center gap-3 text-sm">
+          <Clock className="w-5 h-5 text-amber-400 flex-shrink-0 animate-pulse" />
+          <span>
+            Bloqueo de seguridad activo. Espera{' '}
+            <strong className="font-mono text-white text-base">{lockoutSeconds}s</strong> antes de introducir otro PIN.
+          </span>
+        </div>
+      )}
+
       {/* Mensaje de Error si ocurre */}
-      {errorMessage && (
+      {errorMessage && lockoutSeconds <= 0 && (
         <div className="my-4 max-w-xl mx-auto p-4 rounded-2xl bg-red-950/70 border border-red-800 text-red-200 flex items-center gap-3 text-sm">
           <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
           <span>{errorMessage}</span>
@@ -91,7 +139,7 @@ function TVContent() {
             Conectar con tu Mac
           </h1>
           <p className="text-zinc-400 text-sm sm:text-base">
-            Introduce el código PIN de 4 dígitos generado en la pantalla de tu Mac.
+            Introduce el código PIN de 6 dígitos generado en la pantalla de tu Mac.
           </p>
         </div>
 
@@ -103,7 +151,8 @@ function TVContent() {
               setPin(val);
               setRoomId(val);
             }}
-            length={4}
+            length={6}
+            disabled={lockoutSeconds > 0 || connectionState === 'connecting'}
             onComplete={(fullPin) => handleConnect(fullPin)}
           />
         </div>
@@ -111,7 +160,7 @@ function TVContent() {
         {/* Botón de Conexión */}
         <button
           type="button"
-          disabled={pin.length < 4 || connectionState === 'connecting'}
+          disabled={pin.length < 6 || connectionState === 'connecting' || lockoutSeconds > 0}
           onClick={() => handleConnect()}
           className="w-full max-w-xs py-4 px-6 rounded-2xl bg-xbox-green hover:bg-xbox-lightGreen active:bg-xbox-darkGreen text-white font-bold text-lg flex items-center justify-center gap-3 shadow-xl shadow-xbox-green/20 transition-all hover:scale-105 disabled:opacity-40 disabled:hover:scale-100 disabled:cursor-not-allowed"
         >
@@ -131,7 +180,7 @@ function TVContent() {
         {connectionState === 'connecting' && (
           <p className="mt-4 text-xs text-amber-400 animate-pulse flex items-center gap-1.5">
             <Wifi className="w-3.5 h-3.5" />
-            Esperando transmisión del Mac...
+            Esperando confirmación del Mac...
           </p>
         )}
       </main>

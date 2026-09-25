@@ -14,6 +14,8 @@ interface CastState {
   remoteStream: MediaStream | null;
   isMuted: boolean;
   peerConnected: boolean;
+  pendingViewerRequest: boolean;
+  requireApproval: boolean;
   stats: {
     fps: number;
     latencyMs: number;
@@ -31,6 +33,8 @@ interface CastState {
   setRemoteStream: (stream: MediaStream | null) => void;
   setIsMuted: (muted: boolean) => void;
   setPeerConnected: (connected: boolean) => void;
+  setPendingViewerRequest: (pending: boolean) => void;
+  setRequireApproval: (require: boolean) => void;
   setStats: (stats: Partial<CastState['stats']>) => void;
   addLog: (msg: string) => void;
   reset: () => void;
@@ -47,6 +51,8 @@ const initialState = {
   remoteStream: null,
   isMuted: false,
   peerConnected: false,
+  pendingViewerRequest: false,
+  requireApproval: true,
   stats: {
     fps: 0,
     latencyMs: 0,
@@ -68,6 +74,8 @@ export const useCastStore = create<CastState>((set) => ({
   setRemoteStream: (remoteStream) => set({ remoteStream }),
   setIsMuted: (isMuted) => set({ isMuted }),
   setPeerConnected: (peerConnected) => set({ peerConnected }),
+  setPendingViewerRequest: (pendingViewerRequest) => set({ pendingViewerRequest }),
+  setRequireApproval: (requireApproval) => set({ requireApproval }),
   setStats: (newStats) =>
     set((state) => ({ stats: { ...state.stats, ...newStats } })),
   addLog: (msg) =>

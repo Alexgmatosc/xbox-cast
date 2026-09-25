@@ -23,6 +23,7 @@ export function useWebRTC() {
     setLocalStream,
     setRemoteStream,
     setPeerConnected,
+    setPendingViewerRequest,
     setStats,
     addLog,
     reset,
@@ -35,6 +36,7 @@ export function useWebRTC() {
   const statsIntervalRef = useRef<any>(null);
   const isCreatingOfferRef = useRef<boolean>(false);
   const isProcessingOfferRef = useRef<boolean>(false);
+  const pendingOfferCallbackRef = useRef<(() => void) | null>(null);
 
   // Envía el log tanto al estado local como al servidor de señalización (para ver Xbox en la consola)
   const logAndReport = useCallback(
@@ -84,12 +86,14 @@ export function useWebRTC() {
     iceCandidateQueueRef.current = [];
     isCreatingOfferRef.current = false;
     isProcessingOfferRef.current = false;
+    pendingOfferCallbackRef.current = null;
+    setPendingViewerRequest(false);
     setLocalStream(null);
     setRemoteStream(null);
     setPeerConnected(false);
     setIceState('closed');
     setSignalingState('closed');
-  }, [setLocalStream, setRemoteStream, setPeerConnected, setIceState, setSignalingState]);
+  }, [setLocalStream, setRemoteStream, setPeerConnected, setPendingViewerRequest, setIceState, setSignalingState]);
 
   // Monitor de estadísticas (FPS y latencia)
   const startStatsMonitor = (pc: RTCPeerConnection) => {
@@ -331,8 +335,18 @@ export function useWebRTC() {
 
         // Responder cuando el receptor pide oferta
         signaling.on('request-offer', async () => {
-          logAndReport('Petición de oferta recibida del receptor (request-offer)');
-          await sendOffer('request-offer');
+          logAndReport('Petición de conexión recibida del receptor (request-offer)');
+          const requireApproval = useCastStore.getState().requireApproval;
+          if (requireApproval) {
+            logAndReport('Esperando aprobación del anfitrión en el Mac...');
+            setPendingViewerRequest(true);
+            pendingOfferCallbackRef.current = async () => {
+              setPendingViewerRequest(false);
+              await sendOffer('host-approved');
+            };
+          } else {
+            await sendOffer('request-offer');
+          }
         });
 
         // Escuchar respuesta SDP del receptor (Xbox)
@@ -450,7 +464,7 @@ export function useWebRTC() {
             await flushIceQueue(pc);
             logAndReport('Oferta remota aplicada correctamente');
 
-            if (pc.signalingState !== 'have-remote-offer') {
+            if ((pc.signalingState as string) !== 'have-remote-offer') {
               logAndReport(`Estado no es have-remote-offer (${pc.signalingState})`);
               return;
             }
@@ -500,6 +514,14 @@ export function useWebRTC() {
           }
         });
 
+        // Escuchar errores o rechazo del anfitrión
+        signaling.on('client-error', (errorPayload) => {
+          console.warn('[WebRTC Receiver] Notificación de error/rechazo:', errorPayload);
+          setConnectionState('error');
+          setErrorMessage(errorPayload?.message || 'Conexión denegada o error en la sala');
+          logAndReport(`Receptor notificado de error: ${errorPayload?.message || 'Error desconocido'}`);
+        });
+
         // Solicitar oferta al emisor
         logAndReport('Enviando request-offer al emisor...');
         signaling.send('request-offer');
@@ -512,6 +534,27 @@ export function useWebRTC() {
     },
     [cleanup, createPeerConnection, setConnectionState, setErrorMessage, logAndReport]
   );
+
+  const acceptViewer = useCallback(() => {
+    setPendingViewerRequest(false);
+    if (pendingOfferCallbackRef.current) {
+      logAndReport('Anfitrión aprobó la conexión del receptor.');
+      pendingOfferCallbackRef.current();
+      pendingOfferCallbackRef.current = null;
+    }
+  }, [logAndReport, setPendingViewerRequest]);
+
+  const rejectViewer = useCallback(() => {
+    setPendingViewerRequest(false);
+    pendingOfferCallbackRef.current = null;
+    logAndReport('Anfitrión rechazó la conexión del receptor.');
+    if (signalingRef.current && signalingRef.current.isConnected()) {
+      signalingRef.current.send('client-error', {
+        stage: 'authorization',
+        message: 'Conexión rechazada por el anfitrión del Mac.',
+      });
+    }
+  }, [logAndReport, setPendingViewerRequest]);
 
   const stopStreaming = useCallback(() => {
     cleanup();
@@ -528,5 +571,7 @@ export function useWebRTC() {
     startSender,
     startReceiver,
     stopStreaming,
+    acceptViewer,
+    rejectViewer,
   };
 }
