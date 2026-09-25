@@ -45,10 +45,11 @@ export default function CastPage() {
   const [resolution, setResolution] = useState<'1080p' | '720p'>('1080p');
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Generar un PIN aleatorio de 6 dígitos si no hay uno
+  // Inicializar rol emisor, PIN de 6 dígitos e IP local al montar
   useEffect(() => {
     setRole('sender');
-    if (!roomId || roomId.length !== 6) {
+    const currentRoom = useCastStore.getState().roomId;
+    if (!currentRoom || currentRoom.length !== 6) {
       const generatedPin = Math.floor(100000 + Math.random() * 900000).toString();
       setRoomId(generatedPin);
     }
@@ -60,7 +61,7 @@ export default function CastPage() {
         if (data.primaryIp) setLocalIp(data.primaryIp);
       })
       .catch(() => {});
-  }, [roomId, setRole, setRoomId]);
+  }, [setRole, setRoomId]);
 
   // Calcular URL dinámica para Edge en Xbox (dominio público en producción, IP local en dev)
   useEffect(() => {
@@ -155,11 +156,11 @@ export default function CastPage() {
               <span className="text-xs text-zinc-500 mb-2">CÓDIGO PIN (6 DÍGITOS)</span>
               <div className="flex items-center gap-3">
                 <span className="font-mono text-4xl sm:text-5xl font-black tracking-widest text-white">
-                  {roomId.slice(0, 3)}
+                  {roomId && roomId.length === 6 ? roomId.slice(0, 3) : '•••'}
                 </span>
                 <span className="text-zinc-600 font-mono text-2xl sm:text-3xl font-bold select-none">—</span>
                 <span className="font-mono text-4xl sm:text-5xl font-black tracking-widest text-white">
-                  {roomId.slice(3, 6)}
+                  {roomId && roomId.length === 6 ? roomId.slice(3, 6) : '•••'}
                 </span>
               </div>
             </div>
@@ -172,7 +173,7 @@ export default function CastPage() {
                 <input
                   type="text"
                   readOnly
-                  value={xboxUrl}
+                  value={xboxUrl || 'Generando enlace...'}
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2 text-xs font-mono text-zinc-300 select-all focus:outline-none"
                 />
                 <button
