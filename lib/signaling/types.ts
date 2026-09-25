@@ -7,6 +7,8 @@ export type SignalType =
   | 'answer'
   | 'candidate'
   | 'sender-ready'
+  | 'stream-status'
+  | 'viewer-info'
   | 'telemetry'
   | 'client-error'
   | 'error';

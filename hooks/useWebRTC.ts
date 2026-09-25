@@ -4,6 +4,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useCastStore } from '@/store/useCastStore';
 import { createSignalingClient, SignalingClient } from '@/lib/signaling';
 import { preferH264 } from '@/lib/codecs';
+import { detectDevice } from '@/lib/device';
 
 const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
@@ -24,6 +25,10 @@ export function useWebRTC() {
     setRemoteStream,
     setPeerConnected,
     setPendingViewerRequest,
+    setPendingViewerInfo,
+    setIsStreamingActive,
+    addViewer,
+    removeViewer,
     setStats,
     addLog,
     reset,
@@ -88,12 +93,14 @@ export function useWebRTC() {
     isProcessingOfferRef.current = false;
     pendingOfferCallbackRef.current = null;
     setPendingViewerRequest(false);
+    setPendingViewerInfo(null);
+    setIsStreamingActive(false);
     setLocalStream(null);
     setRemoteStream(null);
     setPeerConnected(false);
     setIceState('closed');
     setSignalingState('closed');
-  }, [setLocalStream, setRemoteStream, setPeerConnected, setPendingViewerRequest, setIceState, setSignalingState]);
+  }, [setLocalStream, setRemoteStream, setPeerConnected, setPendingViewerRequest, setPendingViewerInfo, setIsStreamingActive, setIceState, setSignalingState]);
 
   // Monitor de estadísticas (FPS y latencia)
   const startStatsMonitor = (pc: RTCPeerConnection) => {
@@ -232,47 +239,19 @@ export function useWebRTC() {
     }
   };
 
-  // Iniciar como EMISOR (Mac)
-  const startSender = useCallback(
-    async (
-      targetRoomId: string,
-      options: { fps?: number; resolution?: '1080p' | '720p' } = {}
-    ) => {
+  // Iniciar señalización y conexión en reposo del Emisor (Mac)
+  const initSender = useCallback(
+    async (targetRoomId: string) => {
       try {
-        cleanup();
+        if (signalingRef.current && signalingRef.current.isConnected()) {
+          return;
+        }
+
         setConnectionState('connecting');
         setErrorMessage(null);
-        logAndReport(`Iniciando emisor para sala [${targetRoomId}]`);
+        logAndReport(`Iniciando sala del emisor [${targetRoomId}] (Modo Standby)`);
 
-        const targetFps = options.fps || 60;
-        const width = options.resolution === '720p' ? 1280 : 1920;
-        const height = options.resolution === '720p' ? 720 : 1080;
-
-        // 1. Capturar pantalla y audio con getDisplayMedia
-        const stream = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-            width: { ideal: width },
-            height: { ideal: height },
-            frameRate: { ideal: targetFps, max: targetFps },
-          },
-          audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false,
-          },
-        });
-
-        localStreamRef.current = stream;
-        setLocalStream(stream);
-        logAndReport('Pantalla capturada correctamente');
-
-        // Detectar si el usuario cancela la captura desde el banner nativo del navegador
-        stream.getVideoTracks()[0].onended = () => {
-          logAndReport('Captura detenida por el usuario');
-          stopStreaming();
-        };
-
-        // 2. Conectar señalización
+        // 1. Conectar a señalización
         const signaling = createSignalingClient();
         signalingRef.current = signaling;
         await signaling.connect(targetRoomId, 'sender');
@@ -290,20 +269,25 @@ export function useWebRTC() {
                 preferH264(transceiver);
               }
             });
+          } else {
+            // Transceptores en reposo para permitir enlazar WebRTC antes de capturar pantalla
+            const vt = pc.addTransceiver('video', { direction: 'sendonly' });
+            preferH264(vt);
+            pc.addTransceiver('audio', { direction: 'sendonly' });
+            logAndReport('Transceptores en reposo inicializados (Standby)');
           }
           return pc;
         };
 
         let pc = setupSenderPeerConnection();
 
-        // 3. Función segura para enviar oferta fresca al receptor
+        // Función para enviar oferta fresca al receptor
         const sendOffer = async (reason: string) => {
           if (isCreatingOfferRef.current) {
             logAndReport(`Oferta ignorada (${reason}): ya se está generando una`);
             return;
           }
 
-          // Si la PeerConnection previa falló o cerró, recrear una limpia
           if (
             !pc ||
             pc.signalingState === 'closed' ||
@@ -333,23 +317,38 @@ export function useWebRTC() {
           }
         };
 
-        // Responder cuando el receptor pide oferta
-        signaling.on('request-offer', async () => {
-          logAndReport('Petición de conexión recibida del receptor (request-offer)');
+        // Responder cuando un receptor solicita oferta
+        signaling.on('request-offer', async (payload) => {
+          const viewerInfo = payload?.viewer || {
+            id: `viewer-${Math.random().toString(36).substring(2, 7)}`,
+            name: 'Dispositivo',
+            type: 'xbox',
+          };
+
+          logAndReport(`Petición de conexión de ${viewerInfo.name} (${viewerInfo.type})`);
+          addViewer(viewerInfo);
+
           const requireApproval = useCastStore.getState().requireApproval;
           if (requireApproval) {
-            logAndReport('Esperando aprobación del anfitrión en el Mac...');
+            logAndReport(`Esperando aprobación para ${viewerInfo.name}...`);
+            setPendingViewerInfo(viewerInfo);
             setPendingViewerRequest(true);
             pendingOfferCallbackRef.current = async () => {
               setPendingViewerRequest(false);
+              setPendingViewerInfo(null);
               await sendOffer('host-approved');
+              // Notificar al receptor si la pantalla ya está activa
+              const isCurrentlyStreaming = useCastStore.getState().isStreamingActive;
+              signaling.send('stream-status', { active: isCurrentlyStreaming });
             };
           } else {
             await sendOffer('request-offer');
+            const isCurrentlyStreaming = useCastStore.getState().isStreamingActive;
+            signaling.send('stream-status', { active: isCurrentlyStreaming });
           }
         });
 
-        // Escuchar respuesta SDP del receptor (Xbox)
+        // Escuchar respuesta SDP del receptor
         signaling.on('answer', async (answerPayload) => {
           try {
             logAndReport(`Respuesta SDP recibida (estado actual: ${pc.signalingState})`);
@@ -361,12 +360,18 @@ export function useWebRTC() {
               logAndReport('Respuesta SDP vacía recibida');
               return;
             }
-            await pc.setRemoteDescription(new RTCSessionDescription({
-              type: answerPayload.type || 'answer',
-              sdp: answerPayload.sdp,
-            }));
+            await pc.setRemoteDescription(
+              new RTCSessionDescription({
+                type: answerPayload.type || 'answer',
+                sdp: answerPayload.sdp,
+              })
+            );
             await flushIceQueue(pc);
             logAndReport('Respuesta SDP remota aplicada con éxito (stable)');
+
+            // Informar estado de transmisión al receptor
+            const isCurrentlyStreaming = useCastStore.getState().isStreamingActive;
+            signaling.send('stream-status', { active: isCurrentlyStreaming });
           } catch (err: any) {
             console.warn('[WebRTC Sender] Error al aplicar respuesta remota:', err);
             logAndReport(`Error aplicando respuesta: ${err.message}`);
@@ -393,20 +398,132 @@ export function useWebRTC() {
           }
         });
       } catch (err: any) {
-        console.error('[WebRTC] Error iniciando emisor:', err);
+        console.error('[WebRTC] Error iniciando emisor en reposo:', err);
         setConnectionState('error');
-        setErrorMessage(
-          err.name === 'NotAllowedError'
-            ? 'Permiso de captura de pantalla denegado por el usuario.'
-            : err.message || 'Error al iniciar la transmisión'
-        );
+        setErrorMessage(err.message || 'Error al conectar con la sala');
         logAndReport(`Error emisor: ${err.message}`);
       }
     },
-    [cleanup, createPeerConnection, setConnectionState, setErrorMessage, setLocalStream, logAndReport]
+    [
+      createPeerConnection,
+      setConnectionState,
+      setErrorMessage,
+      addViewer,
+      setPendingViewerInfo,
+      setPendingViewerRequest,
+      logAndReport,
+    ]
   );
 
-  // Iniciar como RECEPTOR (Xbox)
+  // Iniciar o reanudar la captura de pantalla compartida (cambio en caliente sin desconectar)
+  const startScreenShare = useCallback(
+    async (options: { fps?: number; resolution?: '1080p' | '720p' } = {}) => {
+      try {
+        const targetFps = options.fps || 60;
+        const width = options.resolution === '720p' ? 1280 : 1920;
+        const height = options.resolution === '720p' ? 720 : 1080;
+
+        logAndReport('Solicitando captura de pantalla al usuario...');
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            width: { ideal: width },
+            height: { ideal: height },
+            frameRate: { ideal: targetFps, max: targetFps },
+          },
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
+        });
+
+        localStreamRef.current = stream;
+        setLocalStream(stream);
+        setIsStreamingActive(true);
+        logAndReport('Pantalla capturada correctamente');
+
+        // Detectar si el usuario detiene la transmisión desde la barra del navegador
+        stream.getVideoTracks()[0].onended = () => {
+          logAndReport('Captura detenida por el usuario (banner del sistema)');
+          pauseScreenShare();
+        };
+
+        // Reemplazar pistas en caliente en los transceptores existentes
+        if (pcRef.current) {
+          const transceivers = pcRef.current.getTransceivers();
+          const videoTrack = stream.getVideoTracks()[0];
+          const audioTrack = stream.getAudioTracks()[0];
+
+          const vt = transceivers.find(
+            (t) => t.sender.track?.kind === 'video' || t.receiver.track?.kind === 'video'
+          );
+          if (vt && videoTrack) {
+            await vt.sender.replaceTrack(videoTrack);
+            logAndReport('Pista de vídeo reemplazada en caliente');
+          }
+
+          const at = transceivers.find(
+            (t) => t.sender.track?.kind === 'audio' || t.receiver.track?.kind === 'audio'
+          );
+          if (at && audioTrack) {
+            await at.sender.replaceTrack(audioTrack);
+            logAndReport('Pista de audio reemplazada en caliente');
+          }
+        }
+
+        // Notificar a todos los receptores que la pantalla está activa
+        if (signalingRef.current && signalingRef.current.isConnected()) {
+          signalingRef.current.send('stream-status', { active: true });
+        }
+      } catch (err: any) {
+        if (err.name === 'NotAllowedError') {
+          logAndReport('Selección de pantalla cancelada por el usuario');
+        } else {
+          console.error('[WebRTC] Error al capturar pantalla:', err);
+          logAndReport(`Error captura: ${err.message}`);
+        }
+      }
+    },
+    [setLocalStream, setIsStreamingActive, logAndReport]
+  );
+
+  // Pausar transmisión de pantalla (vuelve a reposo sin cortar la sala WebRTC)
+  const pauseScreenShare = useCallback(() => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
+    }
+    setLocalStream(null);
+    setIsStreamingActive(false);
+
+    if (pcRef.current) {
+      const transceivers = pcRef.current.getTransceivers();
+      transceivers.forEach(async (t) => {
+        try {
+          await t.sender.replaceTrack(null);
+        } catch (_) {}
+      });
+    }
+
+    if (signalingRef.current && signalingRef.current.isConnected()) {
+      signalingRef.current.send('stream-status', { active: false });
+    }
+    logAndReport('Transmisión de pantalla en pausa (reposo)');
+  }, [setLocalStream, setIsStreamingActive, logAndReport]);
+
+  // Emisor tradicional (inicia sala y pide pantalla)
+  const startSender = useCallback(
+    async (
+      targetRoomId: string,
+      options: { fps?: number; resolution?: '1080p' | '720p' } = {}
+    ) => {
+      await initSender(targetRoomId);
+      await startScreenShare(options);
+    },
+    [initSender, startScreenShare]
+  );
+
+  // Iniciar como RECEPTOR (Xbox / Móvil / Tablet)
   const startReceiver = useCallback(
     async (targetRoomId: string) => {
       try {
@@ -420,6 +537,13 @@ export function useWebRTC() {
         signalingRef.current = signaling;
         await signaling.connect(targetRoomId, 'receiver');
         logAndReport('Conectado a servidor de señalización');
+
+        // Escuchar cambios de estado en la transmisión (activo vs pausa/espera)
+        signaling.on('stream-status', (payload) => {
+          const active = !!payload?.active;
+          logAndReport(`Estado de transmisión actualizado: ${active ? 'ACTIVO' : 'EN ESPERA'}`);
+          setIsStreamingActive(active);
+        });
 
         // 2. Crear RTCPeerConnection con transceivers recvonly
         let pc = createPeerConnection(true);
@@ -487,7 +611,7 @@ export function useWebRTC() {
               name: err?.name,
               state: pc?.signalingState,
             });
-            setErrorMessage(`Error en Xbox: ${err?.name || 'SDP'} - ${err?.message || err}`);
+            setErrorMessage(`Error en receptor: ${err?.name || 'SDP'} - ${err?.message || err}`);
             logAndReport(`Error procesando oferta: ${err?.message || err}`);
           } finally {
             isProcessingOfferRef.current = false;
@@ -522,9 +646,16 @@ export function useWebRTC() {
           logAndReport(`Receptor notificado de error: ${errorPayload?.message || 'Error desconocido'}`);
         });
 
-        // Solicitar oferta al emisor
-        logAndReport('Enviando request-offer al emisor...');
-        signaling.send('request-offer');
+        // Solicitar oferta al emisor adjuntando información de este dispositivo
+        const currentDevice = detectDevice();
+        logAndReport(`Enviando request-offer (${currentDevice.name})...`);
+        signaling.send('request-offer', {
+          viewer: {
+            id: `viewer-${Math.random().toString(36).substring(2, 7)}`,
+            name: currentDevice.name,
+            type: currentDevice.type,
+          },
+        });
       } catch (err: any) {
         console.error('[WebRTC] Error iniciando receptor:', err);
         setConnectionState('error');
@@ -532,20 +663,22 @@ export function useWebRTC() {
         logAndReport(`Error receptor: ${err.message}`);
       }
     },
-    [cleanup, createPeerConnection, setConnectionState, setErrorMessage, logAndReport]
+    [cleanup, createPeerConnection, setConnectionState, setErrorMessage, setIsStreamingActive, logAndReport]
   );
 
   const acceptViewer = useCallback(() => {
     setPendingViewerRequest(false);
+    setPendingViewerInfo(null);
     if (pendingOfferCallbackRef.current) {
       logAndReport('Anfitrión aprobó la conexión del receptor.');
       pendingOfferCallbackRef.current();
       pendingOfferCallbackRef.current = null;
     }
-  }, [logAndReport, setPendingViewerRequest]);
+  }, [logAndReport, setPendingViewerRequest, setPendingViewerInfo]);
 
   const rejectViewer = useCallback(() => {
     setPendingViewerRequest(false);
+    setPendingViewerInfo(null);
     pendingOfferCallbackRef.current = null;
     logAndReport('Anfitrión rechazó la conexión del receptor.');
     if (signalingRef.current && signalingRef.current.isConnected()) {
@@ -554,7 +687,7 @@ export function useWebRTC() {
         message: 'Conexión rechazada por el anfitrión del Mac.',
       });
     }
-  }, [logAndReport, setPendingViewerRequest]);
+  }, [logAndReport, setPendingViewerRequest, setPendingViewerInfo]);
 
   const stopStreaming = useCallback(() => {
     cleanup();
@@ -568,6 +701,9 @@ export function useWebRTC() {
   }, [cleanup]);
 
   return {
+    initSender,
+    startScreenShare,
+    pauseScreenShare,
     startSender,
     startReceiver,
     stopStreaming,

@@ -15,7 +15,10 @@ interface CastState {
   isMuted: boolean;
   peerConnected: boolean;
   pendingViewerRequest: boolean;
+  pendingViewerInfo: { id: string; name: string; type: string } | null;
   requireApproval: boolean;
+  isStreamingActive: boolean;
+  viewers: { id: string; name: string; type: string; joinedAt: number }[];
   stats: {
     fps: number;
     latencyMs: number;
@@ -34,7 +37,11 @@ interface CastState {
   setIsMuted: (muted: boolean) => void;
   setPeerConnected: (connected: boolean) => void;
   setPendingViewerRequest: (pending: boolean) => void;
+  setPendingViewerInfo: (info: { id: string; name: string; type: string } | null) => void;
   setRequireApproval: (require: boolean) => void;
+  setIsStreamingActive: (active: boolean) => void;
+  addViewer: (viewer: { id: string; name: string; type: string }) => void;
+  removeViewer: (id: string) => void;
   setStats: (stats: Partial<CastState['stats']>) => void;
   addLog: (msg: string) => void;
   reset: () => void;
@@ -52,7 +59,10 @@ const initialState = {
   isMuted: false,
   peerConnected: false,
   pendingViewerRequest: false,
+  pendingViewerInfo: null,
   requireApproval: true,
+  isStreamingActive: false,
+  viewers: [],
   stats: {
     fps: 0,
     latencyMs: 0,
@@ -75,7 +85,26 @@ export const useCastStore = create<CastState>((set) => ({
   setIsMuted: (isMuted) => set({ isMuted }),
   setPeerConnected: (peerConnected) => set({ peerConnected }),
   setPendingViewerRequest: (pendingViewerRequest) => set({ pendingViewerRequest }),
+  setPendingViewerInfo: (pendingViewerInfo) => set({ pendingViewerInfo }),
   setRequireApproval: (requireApproval) => set({ requireApproval }),
+  setIsStreamingActive: (isStreamingActive) => set({ isStreamingActive }),
+  addViewer: (viewer) =>
+    set((state) => {
+      const exists = state.viewers.some((v) => v.id === viewer.id);
+      if (exists) return state;
+      return {
+        viewers: [...state.viewers, { ...viewer, joinedAt: Date.now() }],
+        peerConnected: true,
+      };
+    }),
+  removeViewer: (id) =>
+    set((state) => {
+      const updated = state.viewers.filter((v) => v.id !== id);
+      return {
+        viewers: updated,
+        peerConnected: updated.length > 0,
+      };
+    }),
   setStats: (newStats) =>
     set((state) => ({ stats: { ...state.stats, ...newStats } })),
   addLog: (msg) =>

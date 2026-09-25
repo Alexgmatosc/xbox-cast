@@ -3,17 +3,30 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Tv, Play, AlertCircle, Wifi, Clock, ShieldCheck } from 'lucide-react';
+import {
+  ArrowLeft,
+  Tv,
+  Play,
+  AlertCircle,
+  Wifi,
+  Clock,
+  ShieldCheck,
+  Smartphone,
+  Monitor,
+} from 'lucide-react';
 import { useCastStore } from '@/store/useCastStore';
 import { useWebRTC } from '@/hooks/useWebRTC';
+import { useDevice } from '@/hooks/useDevice';
 import { TVSafeLayout } from '@/components/TVSafeLayout';
 import { PinInput } from '@/components/PinInput';
 import { VideoPlayer } from '@/components/VideoPlayer';
+import { StandbyScreen } from '@/components/StandbyScreen';
 import { DebugPanel } from '@/components/DebugPanel';
 
 function TVContent() {
   const searchParams = useSearchParams();
   const initialRoom = searchParams.get('room') || '';
+  const { isMobile, isXbox, isTV, name } = useDevice();
 
   const {
     roomId,
@@ -22,6 +35,7 @@ function TVContent() {
     connectionState,
     errorMessage,
     remoteStream,
+    isStreamingActive,
   } = useCastStore();
 
   const { startReceiver, stopStreaming } = useWebRTC();
@@ -72,7 +86,7 @@ function TVContent() {
 
     setRoomId(code);
 
-    // Intentar solicitar pantalla completa al pulsar el botón (gesto de usuario válido en consola)
+    // Intentar solicitar pantalla completa al pulsar el botón (gesto de usuario válido en consola/móvil)
     try {
       if (document.documentElement.requestFullscreen && !document.fullscreenElement) {
         await document.documentElement.requestFullscreen();
@@ -84,21 +98,26 @@ function TVContent() {
     await startReceiver(code);
   };
 
-  // Si ya estamos conectados y recibiendo stream, mostrar reproductor a pantalla completa
-  if (connectionState === 'connected' && remoteStream) {
-    return <VideoPlayer stream={remoteStream} onDisconnect={stopStreaming} />;
+  // Si ya estamos conectados P2P:
+  // - Si el anfitrión está transmitiendo vídeo activamente, mostrar reproductor a pantalla completa
+  // - Si está en espera o pausado, mostrar la pantalla de Standby sin perder la conexión
+  if (connectionState === 'connected') {
+    if (isStreamingActive && remoteStream) {
+      return <VideoPlayer stream={remoteStream} onDisconnect={stopStreaming} />;
+    }
+    return <StandbyScreen onDisconnect={stopStreaming} isTV={isXbox || isTV} />;
   }
 
   return (
-    <TVSafeLayout isTV={true} className="flex flex-col justify-between py-6">
+    <TVSafeLayout isTV={isXbox || isTV} className="flex flex-col justify-between py-6">
       {/* Barra superior */}
       <header className="flex items-center justify-between border-b border-zinc-800/80 pb-5">
         <Link
           href="/"
-          className="flex items-center gap-3 p-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
+          className="flex items-center gap-2.5 p-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
         >
           <ArrowLeft className="w-5 h-5" />
-          <span className="text-sm font-semibold">Volver al inicio</span>
+          <span className="text-sm font-semibold hidden sm:inline">Volver</span>
         </Link>
 
         <div className="flex items-center gap-2">
@@ -106,9 +125,24 @@ function TVContent() {
             <ShieldCheck className="w-3.5 h-3.5" />
             <span>E2EE 256-bit</span>
           </div>
+
           <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-zinc-900 border border-zinc-800 text-xs font-medium text-zinc-300">
-            <Tv className="w-4 h-4 text-xbox-green" />
-            <span>Modo TV (Xbox Edge)</span>
+            {isXbox ? (
+              <>
+                <Tv className="w-4 h-4 text-xbox-green" />
+                <span>Modo TV (Xbox Edge)</span>
+              </>
+            ) : isMobile ? (
+              <>
+                <Smartphone className="w-4 h-4 text-emerald-400" />
+                <span>{name}</span>
+              </>
+            ) : (
+              <>
+                <Monitor className="w-4 h-4 text-blue-400" />
+                <span>{name}</span>
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -119,7 +153,8 @@ function TVContent() {
           <Clock className="w-5 h-5 text-amber-400 flex-shrink-0 animate-pulse" />
           <span>
             Bloqueo de seguridad activo. Espera{' '}
-            <strong className="font-mono text-white text-base">{lockoutSeconds}s</strong> antes de introducir otro PIN.
+            <strong className="font-mono text-white text-base">{lockoutSeconds}s</strong> antes de
+            introducir otro PIN.
           </span>
         </div>
       )}
@@ -133,17 +168,19 @@ function TVContent() {
       )}
 
       {/* Contenido Central: Introducción de PIN */}
-      <main className="my-auto flex flex-col items-center justify-center text-center max-w-xl mx-auto w-full">
+      <main className="my-auto flex flex-col items-center justify-center text-center max-w-xl mx-auto w-full py-4">
         <div className="mb-6">
           <h1 className="text-3xl sm:text-4xl md:text-5xl font-black tracking-tight text-white mb-3">
-            Conectar con tu Mac
+            Conectar con tu Pantalla
           </h1>
           <p className="text-zinc-400 text-sm sm:text-base">
-            Introduce el código PIN de 6 dígitos generado en la pantalla de tu Mac.
+            {isMobile
+              ? 'Introduce el código PIN de 6 dígitos que aparece en tu ordenador.'
+              : 'Introduce el código PIN de 6 dígitos generado en la pantalla de tu Mac o PC.'}
           </p>
         </div>
 
-        {/* Componente de entrada PIN para mando y teclado */}
+        {/* Componente de entrada PIN para mando, pantalla táctil y teclado */}
         <div className="mb-8 w-full flex justify-center">
           <PinInput
             value={pin}
@@ -180,16 +217,24 @@ function TVContent() {
         {connectionState === 'connecting' && (
           <p className="mt-4 text-xs text-amber-400 animate-pulse flex items-center gap-1.5">
             <Wifi className="w-3.5 h-3.5" />
-            Esperando confirmación del Mac...
+            Esperando confirmación del emisor...
           </p>
         )}
       </main>
 
-      {/* Indicaciones para mando de Xbox */}
+      {/* Indicaciones dinámicas según dispositivo */}
       <footer className="text-center text-xs text-zinc-500 border-t border-zinc-900 pt-6">
-        <span>Consejo: Usa el D-Pad del mando para navegar entre las teclas y pulsa </span>
-        <kbd className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 font-mono text-xs">A</kbd>
-        <span> para seleccionar.</span>
+        {isXbox ? (
+          <>
+            <span>Consejo: Usa el D-Pad del mando para navegar entre las teclas y pulsa </span>
+            <kbd className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 font-mono text-xs">A</kbd>
+            <span> para seleccionar.</span>
+          </>
+        ) : isMobile ? (
+          <span>Pulsa las casillas o usa el teclado numérico en pantalla para introducir el PIN.</span>
+        ) : (
+          <span>Introduce los 6 dígitos usando tu teclado o el ratón.</span>
+        )}
       </footer>
 
       <DebugPanel />

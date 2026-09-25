@@ -41,6 +41,17 @@ export function VideoPlayer({ stream, onDisconnect }: VideoPlayerProps) {
     }, 3500);
   }, []);
 
+  // Doble toque para alternar pantalla completa en móviles / táctil
+  const lastTapRef = useRef<number>(0);
+  const handleTouchEnd = useCallback(() => {
+    const now = Date.now();
+    if (now - lastTapRef.current < 350) {
+      toggleFullscreen();
+    }
+    lastTapRef.current = now;
+    resetHudTimer();
+  }, [resetHudTimer]);
+
   useEffect(() => {
     resetHudTimer();
 
@@ -88,6 +99,7 @@ export function VideoPlayer({ stream, onDisconnect }: VideoPlayerProps) {
     <div
       ref={containerRef}
       onClick={resetHudTimer}
+      onTouchEnd={handleTouchEnd}
       className="relative w-screen h-screen bg-black overflow-hidden flex items-center justify-center cursor-none hover:cursor-default"
       style={{ userSelect: 'none' }}
     >
