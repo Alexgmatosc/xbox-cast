@@ -109,9 +109,9 @@ function TVContent() {
   }
 
   return (
-    <TVSafeLayout isTV={isXbox || isTV} className="flex flex-col justify-between py-6">
+    <TVSafeLayout isTV={isXbox || isTV} className="flex flex-col justify-between py-6 min-h-screen">
       {/* Barra superior */}
-      <header className="flex items-center justify-between border-b border-zinc-800/80 pb-5">
+      <header className="flex-shrink-0 flex items-center justify-between border-b border-zinc-800/80 pb-5">
         <Link
           href="/"
           className="flex items-center gap-2.5 p-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
@@ -223,7 +223,7 @@ function TVContent() {
       </main>
 
       {/* Indicaciones dinámicas según dispositivo */}
-      <footer className="text-center text-xs text-zinc-500 border-t border-zinc-900 pt-6">
+      <footer className="flex-shrink-0 text-center text-xs text-zinc-500 border-t border-zinc-900 pt-6 mt-4">
         {isXbox ? (
           <>
             <span>Consejo: Usa el D-Pad del mando para navegar entre las teclas y pulsa </span>

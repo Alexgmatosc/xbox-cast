@@ -14,9 +14,13 @@ export function StandbyScreen({ onDisconnect, isTV = false }: StandbyScreenProps
   const { roomId, stats, connectionState } = useCastStore();
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col justify-between p-6 sm:p-10 select-none">
+    <div
+      className={`min-h-screen bg-black text-white flex flex-col justify-between p-6 sm:p-10 ${
+        isTV ? 'select-none' : ''
+      }`}
+    >
       {/* Barra superior */}
-      <header className="flex items-center justify-between border-b border-zinc-800/80 pb-5">
+      <header className="flex items-center justify-between border-b border-zinc-800/80 pb-5 flex-shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-xbox-green">
             <Tv className="w-5 h-5" />
@@ -47,7 +51,7 @@ export function StandbyScreen({ onDisconnect, isTV = false }: StandbyScreenProps
       </header>
 
       {/* Contenido Central: Estado en Reposo */}
-      <main className="my-auto flex flex-col items-center justify-center text-center max-w-lg mx-auto w-full">
+      <main className="my-auto flex flex-col items-center justify-center text-center max-w-lg mx-auto w-full py-8">
         {/* Radar / Animación de conexión */}
         <div className="relative mb-8 flex items-center justify-center">
           <div className="absolute w-36 h-36 rounded-full bg-xbox-green/10 animate-ping opacity-40 pointer-events-none" />
@@ -79,7 +83,7 @@ export function StandbyScreen({ onDisconnect, isTV = false }: StandbyScreenProps
 
       {/* Pie con indicaciones de mando si es TV */}
       {isTV && (
-        <footer className="text-center text-xs text-zinc-500 border-t border-zinc-900 pt-6">
+        <footer className="text-center text-xs text-zinc-500 border-t border-zinc-900 pt-6 flex-shrink-0">
           <span>Pulsa </span>
           <kbd className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 font-mono text-xs">B</kbd>
           <span> en el mando para desconectar o salir.</span>
